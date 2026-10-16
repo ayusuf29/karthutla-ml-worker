@@ -1,0 +1,46 @@
+services:
+  # ===========================================================================
+  # AMD Instinct / ROCm High-Compute ML Inference Worker (gRPC)
+  # ===========================================================================
+  sentinel-ml-worker-amd:
+    image: ghcr.io/${GITHUB_REPOSITORY:-owner/karhutla-ml-worker}:latest
+    container_name: sentinel-ml-worker-amd
+    restart: unless-stopped
+    # Pass AMD GPU device files into container
+    devices:
+      - "/dev/kfd:/dev/kfd"
+      - "/dev/dri:/dev/dri"
+    security_opt:
+      - seccomp=unconfined
+    group_add:
+      - video
+      - render
+    environment:
+      GRPC_PORT: 50051
+      PYTHONUNBUFFERED: "1"
+      # If using consumer/workstation RDNA3 (e.g. Radeon 7900XTX/W7900), uncomment:
+      # HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+    ports:
+      - "50051:50051"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import socket; s = socket.socket(); s.connect((\"localhost\", 50051)); s.close()'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ===========================================================================
+  # Optional: Nginx Reverse Proxy for TLS (gRPC HTTP/2 Termination)
+  # Recommended if exposing directly to public internet without VPN
+  # ===========================================================================
+  # nginx-grpc:
+  #   image: nginx:alpine
+  #   container_name: sentinel-nginx-grpc
+  #   restart: unless-stopped
+  #   ports:
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx-grpc.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - /etc/letsencrypt:/etc/letsencrypt:ro
+  #   depends_on:
+  #     - sentinel-ml-worker-amd

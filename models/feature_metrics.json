@@ -1,0 +1,74 @@
+{
+  "model_version": "karhutla_xgb_v1",
+  "created_at": "2026-10-14T09:44:14Z",
+  "hardware_engine": "CPU (XGBoost Histogram)",
+  "feature_order": [
+    "peat_depth_meters",
+    "ground_water_level_cm",
+    "days_without_rain",
+    "vapor_pressure_deficit",
+    "distance_to_road_meters",
+    "distance_to_canal_meters"
+  ],
+  "train_samples": 756320,
+  "val_samples": 625603,
+  "metrics": {
+    "train_roc_auc": 0.8417,
+    "val_roc_auc": 0.7838,
+    "train_pr_auc": 0.7653,
+    "val_pr_auc": 0.6035,
+    "val_f1_threshold_0_50": 0.6265,
+    "val_precision": 0.579,
+    "val_recall": 0.6826,
+    "optimal_threshold": 0.44,
+    "optimal_f1": 0.6373,
+    "confusion_matrix": [
+      [
+        305662,
+        106113
+      ],
+      [
+        67877,
+        145951
+      ]
+    ]
+  },
+  "risk_category_distribution_validation": {
+    "LOW": 246649,
+    "MEDIUM": 191980,
+    "HIGH": 145583,
+    "EXTREME": 41391
+  },
+  "feature_importances": {
+    "ground_water_level_cm": {
+      "weight": 1928.0,
+      "gain": 760.7399,
+      "cover": 24954.14
+    },
+    "days_without_rain": {
+      "weight": 1083.0,
+      "gain": 252.4622,
+      "cover": 16904.34
+    },
+    "vapor_pressure_deficit": {
+      "weight": 2301.0,
+      "gain": 237.602,
+      "cover": 21814.74
+    },
+    "distance_to_road_meters": {
+      "weight": 2183.0,
+      "gain": 165.4596,
+      "cover": 14227.58
+    },
+    "distance_to_canal_meters": {
+      "weight": 1871.0,
+      "gain": 138.1104,
+      "cover": 11930.22
+    },
+    "peat_depth_meters": {
+      "weight": 1222.0,
+      "gain": 69.1575,
+      "cover": 10210.88
+    }
+  }
+}

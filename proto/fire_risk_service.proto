@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package sentinel.ml;
+option java_package = "com.sentinel.grpc";
+option java_multiple_files = true;
+
+service FireRiskInferenceService {
+  rpc BatchPredictIgnitionRisk (BatchRiskRequest) returns (BatchRiskResponse);
+  rpc AnalyzeSarClearingAnomaly (SarAnomalyRequest) returns (SarAnomalyResponse);
+}
+
+message H3FeatureVector {
+  string h3_index = 1;
+  double peat_depth_meters = 2;
+  double ground_water_level_cm = 3;
+  int32 days_without_rain = 4;
+  double vapor_pressure_deficit = 5;
+  double distance_to_road_meters = 6;
+  double distance_to_canal_meters = 7;
+}
+
+message BatchRiskRequest {
+  string region_id = 1;
+  repeated H3FeatureVector features = 2;
+}
+
+message H3RiskResult {
+  string h3_index = 1;
+  double risk_score = 2;
+  string risk_category = 3;
+  bool sar_anomaly_flag = 4;
+}
+
+message BatchRiskResponse {
+  repeated H3RiskResult results = 1;
+  int64 compute_time_ms = 2;
+  string accelerator_hardware = 3;
+}
+
+message SarAnomalyRequest {
+  string h3_index = 1;
+  bytes pre_event_sar_tile = 2;
+  bytes post_event_sar_tile = 3;
+}
+
+message SarAnomalyResponse {
+  string h3_index = 1;
+  bool clearing_detected = 2;
+  double confidence = 3;
+}
