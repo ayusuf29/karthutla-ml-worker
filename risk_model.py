@@ -5,6 +5,22 @@ import numpy as np
 
 logger = logging.getLogger("RiskModel")
 
+def _safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+def _safe_int(val, default=0):
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
 class PeatFireRiskModel:
     """
     High-Throughput Peatland Fire Risk Inference Model (CPU Optimized)
@@ -65,13 +81,22 @@ class PeatFireRiskModel:
         # Parse feature vectors
         parsed = []
         for feat in feature_list:
-            h3_index = getattr(feat, 'h3_index', None) or feat.get('h3_index')
-            gwl = float(getattr(feat, 'ground_water_level_cm', None) or feat.get('ground_water_level_cm', -35.0))
-            dwr = int(getattr(feat, 'days_without_rain', None) or feat.get('days_without_rain', 5))
-            vpd = float(getattr(feat, 'vapor_pressure_deficit', None) or feat.get('vapor_pressure_deficit', 2.0))
-            depth = float(getattr(feat, 'peat_depth_meters', None) or feat.get('peat_depth_meters', 2.0))
-            dist_road = float(getattr(feat, 'distance_to_road_meters', None) or feat.get('distance_to_road_meters', 1500.0))
-            dist_canal = float(getattr(feat, 'distance_to_canal_meters', None) or feat.get('distance_to_canal_meters', 800.0))
+            if isinstance(feat, dict):
+                h3_index = str(feat.get('h3_index') or '')
+                depth = _safe_float(feat.get('peat_depth_meters'), 2.0)
+                gwl = _safe_float(feat.get('ground_water_level_cm'), -35.0)
+                dwr = _safe_int(feat.get('days_without_rain'), 5)
+                vpd = _safe_float(feat.get('vapor_pressure_deficit'), 2.0)
+                dist_road = _safe_float(feat.get('distance_to_road_meters'), 1500.0)
+                dist_canal = _safe_float(feat.get('distance_to_canal_meters'), 800.0)
+            else:
+                h3_index = str(getattr(feat, 'h3_index', ''))
+                depth = _safe_float(getattr(feat, 'peat_depth_meters', None), 2.0)
+                gwl = _safe_float(getattr(feat, 'ground_water_level_cm', None), -35.0)
+                dwr = _safe_int(getattr(feat, 'days_without_rain', None), 5)
+                vpd = _safe_float(getattr(feat, 'vapor_pressure_deficit', None), 2.0)
+                dist_road = _safe_float(getattr(feat, 'distance_to_road_meters', None), 1500.0)
+                dist_canal = _safe_float(getattr(feat, 'distance_to_canal_meters', None), 800.0)
 
             parsed.append((h3_index, depth, gwl, dwr, vpd, dist_road, dist_canal))
 
