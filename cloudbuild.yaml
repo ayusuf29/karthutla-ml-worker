@@ -1,0 +1,11 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.local'
+      - '-t'
+      - 'asia-southeast2-docker.pkg.dev/$PROJECT_ID/karhutla-sentinel/sentinel-ml-worker:latest'
+      - '.'
+images:
+  - 'asia-southeast2-docker.pkg.dev/$PROJECT_ID/karhutla-sentinel/sentinel-ml-worker:latest'
