@@ -3,7 +3,10 @@ services:
   # AMD Instinct / ROCm High-Compute ML Inference Worker (gRPC)
   # ===========================================================================
   sentinel-ml-worker-amd:
-    image: ghcr.io/${GITHUB_REPOSITORY:-owner/karhutla-ml-worker}:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sentinel-ml-worker-amd:latest
     container_name: sentinel-ml-worker-amd
     restart: unless-stopped
     # Pass AMD GPU device files into container
