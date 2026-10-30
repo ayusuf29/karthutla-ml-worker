@@ -1,5 +1,4 @@
-# Nusantara Fire Sentinel — ML Worker AMD Cloud (ROCm)
-
+# Nusantara Fire Sentinel — ML Worker
 [🇬🇧 Read in English](README.md) • [📜 Lisensi MIT](LICENSE) • [🛡️ Panduan Kontribusi](CONTRIBUTING-IN.md)
 
 Stateless Heavy-Compute GPU/CPU Machine Learning Inference Engine untuk Sistem Pencegahan dan Penanggulangan Kebakaran Hutan & Lahan Gambut (Karhutla) Indonesia.
