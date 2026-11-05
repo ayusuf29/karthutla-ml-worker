@@ -21,7 +21,7 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-echo [2/4] Running Step 02: Merge NASA POWER Weather and FIRMS Telemetry...
+echo [2/5] Running Step 02: Merge NASA POWER Weather and FIRMS Telemetry...
 python -u training\02_merge_weather_and_firms.py
 if %errorlevel% neq 0 (
     echo [FAILED] Step 02 encountered an error. Aborting pipeline.
@@ -29,7 +29,14 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-echo [3/4] Running Step 03: Train Karhutla XGBoost Classifier...
+echo [3/5] Running Step 05: Real-Time Telemetry Scraping (May 2026 - Present)...
+python -u training\05_realtime_data_fetcher.py --start 2026-05-01
+if %errorlevel% neq 0 (
+    echo [WARNING] Step 05 realtime fetcher warning, proceeding with available dataset.
+)
+echo.
+
+echo [4/5] Running Step 03: Train Karhutla XGBoost Classifier...
 python -u training\03_train_xgboost.py
 if %errorlevel% neq 0 (
     echo [FAILED] Step 03 encountered an error. Aborting pipeline.

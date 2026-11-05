@@ -1,0 +1,10 @@
+{
+    "java.compile.nullAnalysis.mode": "automatic",
+    "git.branchProtection": [
+        "main",
+        "master"
+    ],
+    "git.branchProtectionPrompt": "alwaysCommitToNewBranch",
+    "git.confirmSync": true,
+    "git.allowNoVerifyCommit": false
+}

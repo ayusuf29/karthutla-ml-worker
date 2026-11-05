@@ -44,7 +44,8 @@ logger = logging.getLogger("TrainXGBoost")
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
-MODELS_DIR = os.path.join(BASE_DIR, "ml-worker", "models")
+MODELS_DIR = os.path.join(BASE_DIR, "karhutla-ml-worker-amd", "models")
+LEGACY_MODELS_DIR = os.path.join(BASE_DIR, "ml-worker", "models")
 DATASET_PATH = os.path.join(PROCESSED_DIR, "h3_training_dataset.parquet")
 MODEL_OUT_PATH = os.path.join(MODELS_DIR, "karhutla_xgb_v1.json")
 METRICS_OUT_PATH = os.path.join(MODELS_DIR, "feature_metrics.json")
@@ -238,6 +239,16 @@ def train_model():
         json.dump(metrics_summary, fp, indent=2)
 
     logger.info("Successfully exported metrics to %s", METRICS_OUT_PATH)
+
+    if os.path.exists(os.path.dirname(LEGACY_MODELS_DIR)):
+        try:
+            os.makedirs(LEGACY_MODELS_DIR, exist_ok=True)
+            import shutil
+            shutil.copy(MODEL_OUT_PATH, os.path.join(LEGACY_MODELS_DIR, "karhutla_xgb_v1.json"))
+            shutil.copy(METRICS_OUT_PATH, os.path.join(LEGACY_MODELS_DIR, "feature_metrics.json"))
+        except Exception:
+            pass
+
     logger.info("Step 03 completed in %.2fs total", time.time() - t0)
 
 if __name__ == "__main__":
