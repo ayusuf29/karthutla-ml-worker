@@ -1,0 +1,115 @@
+services:
+  # ===========================================================================
+  # 1. PostgreSQL 16 + PostGIS 3.4
+  # ===========================================================================
+  sentinel-postgres:
+    image: postgis/postgis:16-3.4
+    container_name: sentinel-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fire_sentinel_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sentinel_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentinel_admin} -d ${POSTGRES_DB:-fire_sentinel_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-network
+
+  # ===========================================================================
+  # 2. Redis 7 Alpine
+  # ===========================================================================
+  sentinel-redis:
+    image: redis:7-alpine
+    container_name: sentinel-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-network
+
+  # ===========================================================================
+  # 3. Python ML Inference Worker (CPU Mode)
+  # ===========================================================================
+  sentinel-ml-worker:
+    image: ${MLWORKER_IMAGE:-ghcr.io/ayusuf29/karthutla-ml-worker:latest}
+    container_name: sentinel-ml-worker
+    restart: always
+    environment:
+      GRPC_PORT: 50051
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - sentinel-network
+
+  # ===========================================================================
+  # 4. Spring Boot 3.3 Core Backend Control Plane
+  # ===========================================================================
+  sentinel-backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/ayusuf29/karhutla-control-plane-backend:latest}
+    container_name: sentinel-backend
+    restart: always
+    depends_on:
+      sentinel-postgres:
+        condition: service_healthy
+      sentinel-redis:
+        condition: service_healthy
+      sentinel-ml-worker:
+        condition: service_started
+    ports:
+      # Hanya bind ke localhost Linode demi keamanan (diakses via ngrok / Cloudflare Tunnel)
+      - "127.0.0.1:8080:8080"
+    environment:
+      JAVA_OPTS: "-XX:+UseG1GC -Xms256m -Xmx1536m"
+      SPRING_PROFILES_ACTIVE: prod
+      POSTGRES_HOST: sentinel-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-fire_sentinel_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sentinel_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      REDIS_HOST: sentinel-redis
+      REDIS_PORT: 6379
+      ML_SERVICE_URL: dns:///sentinel-ml-worker:50051
+      SENTINEL_ML_SERVICE_USE_TLS: "false"
+      SENTINEL_ML_SERVICE_TIMEOUT_MS: "30000"
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      AMD_API_KEY: ${AMD_API_KEY:-}
+      AMD_BASE_URL: ${AMD_BASE_URL:-https://developer.amd.com.cn/radeon/api/v1}
+      AMD_MODEL: ${AMD_MODEL:-Qwen3.8-Flash-Next}
+    networks:
+      - sentinel-network
+
+  # ===========================================================================
+  # 5. Cloudflare Tunnel (Aktif jika CLOUDFLARE_TUNNEL_TOKEN diisi di .env)
+  # ===========================================================================
+  cloudflared-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-tunnel
+    restart: always
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - sentinel-network
+    profiles:
+      - cloudflare
+
+networks:
+  sentinel-network:
+    name: sentinel-prod-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: sentinel_prod_postgres_data
+  redis_data:
+    name: sentinel_prod_redis_data
