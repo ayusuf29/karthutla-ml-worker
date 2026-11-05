@@ -1,6 +1,6 @@
 {
   "model_version": "karhutla_xgb_v1",
-  "created_at": "2026-10-14T09:44:14Z",
+  "created_at": "2026-10-30T10:06:43Z",
   "hardware_engine": "CPU (XGBoost Histogram)",
   "feature_order": [
     "peat_depth_meters",
@@ -10,65 +10,65 @@
     "distance_to_road_meters",
     "distance_to_canal_meters"
   ],
-  "train_samples": 756320,
-  "val_samples": 625603,
+  "train_samples": 3404120,
+  "val_samples": 1203944,
   "metrics": {
-    "train_roc_auc": 0.8417,
-    "val_roc_auc": 0.7838,
-    "train_pr_auc": 0.7653,
-    "val_pr_auc": 0.6035,
-    "val_f1_threshold_0_50": 0.6265,
-    "val_precision": 0.579,
-    "val_recall": 0.6826,
-    "optimal_threshold": 0.44,
-    "optimal_f1": 0.6373,
+    "train_roc_auc": 0.8319,
+    "val_roc_auc": 0.7847,
+    "train_pr_auc": 0.7465,
+    "val_pr_auc": 0.7597,
+    "val_f1_threshold_0_50": 0.763,
+    "val_precision": 0.6821,
+    "val_recall": 0.8658,
+    "optimal_threshold": 0.47,
+    "optimal_f1": 0.7648,
     "confusion_matrix": [
       [
-        305662,
-        106113
+        334483,
+        249994
       ],
       [
-        67877,
-        145951
+        83132,
+        536335
       ]
     ]
   },
   "risk_category_distribution_validation": {
-    "LOW": 246649,
-    "MEDIUM": 191980,
-    "HIGH": 145583,
-    "EXTREME": 41391
+    "HIGH": 482346,
+    "MEDIUM": 344541,
+    "LOW": 205776,
+    "EXTREME": 171281
   },
   "feature_importances": {
-    "ground_water_level_cm": {
-      "weight": 1928.0,
-      "gain": 760.7399,
-      "cover": 24954.14
-    },
-    "days_without_rain": {
-      "weight": 1083.0,
-      "gain": 252.4622,
-      "cover": 16904.34
-    },
     "vapor_pressure_deficit": {
-      "weight": 2301.0,
-      "gain": 237.602,
-      "cover": 21814.74
+      "weight": 2187.0,
+      "gain": 2311.1709,
+      "cover": 150986.14
+    },
+    "ground_water_level_cm": {
+      "weight": 3093.0,
+      "gain": 1667.4154,
+      "cover": 64222.98
     },
     "distance_to_road_meters": {
-      "weight": 2183.0,
-      "gain": 165.4596,
-      "cover": 14227.58
+      "weight": 1967.0,
+      "gain": 518.9943,
+      "cover": 63846.6
     },
     "distance_to_canal_meters": {
-      "weight": 1871.0,
-      "gain": 138.1104,
-      "cover": 11930.22
+      "weight": 1493.0,
+      "gain": 497.529,
+      "cover": 46084.07
+    },
+    "days_without_rain": {
+      "weight": 1169.0,
+      "gain": 375.3219,
+      "cover": 52754.59
     },
     "peat_depth_meters": {
-      "weight": 1222.0,
-      "gain": 69.1575,
-      "cover": 10210.88
+      "weight": 1018.0,
+      "gain": 186.2126,
+      "cover": 30998.85
     }
   }
 }

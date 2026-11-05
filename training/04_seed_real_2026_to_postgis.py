@@ -32,7 +32,9 @@ logger = logging.getLogger("SeedPostGIS")
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
 RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
-MODELS_DIR = os.path.join(BASE_DIR, "ml-worker", "models")
+MODELS_DIR = os.path.join(BASE_DIR, "karhutla-ml-worker-amd", "models")
+if not os.path.exists(MODELS_DIR):
+    MODELS_DIR = os.path.join(BASE_DIR, "ml-worker", "models")
 
 STATIC_PARQUET = os.path.join(PROCESSED_DIR, "h3_static_features.parquet")
 MODEL_PATH = os.path.join(MODELS_DIR, "karhutla_xgb_v1.json")
@@ -70,98 +72,142 @@ def get_db_config():
 def get_latest_weather_and_hotspots(df_static):
     """
     Extracts the latest available weather conditions (October 2026) for each H3 cell
-    and recent hotspot occurrences from Sipongi & FIRMS.
+    across Sumatra, Kalimantan, and Papua, along with recent hotspot occurrences.
     """
-    nasa_dir = os.path.join(RAW_DIR, "nasa_power")
-    csv_2026 = glob.glob(os.path.join(nasa_dir, "*2026*.csv"))
-    logger.info("Reading %d NASA POWER 2026 weather files...", len(csv_2026))
+    weather_multiyear_dir = os.path.join(RAW_DIR, "weather_multiyear")
+    parquet_2026 = glob.glob(os.path.join(weather_multiyear_dir, "*2026.parquet"))
+    
+    if parquet_2026:
+        logger.info("Found %d station weather files in weather_multiyear cache.", len(parquet_2026))
+        w_dfs = []
+        for f in parquet_2026:
+            df_p = pd.read_parquet(f)
+            df_p["date"] = pd.to_datetime(df_p["date"]).dt.date
+            w_dfs.append(df_p)
+        df_all_w = pd.concat(w_dfs, ignore_index=True)
+        latest_date = df_all_w["date"].max()
+        logger.info("Latest 2026 weather record date from stations: %s", latest_date)
 
-    dfs = []
-    for f in csv_2026:
-        with open(f, 'r') as fp:
-            skip = 0
-            for i, line in enumerate(fp):
-                if "-END HEADER-" in line:
-                    skip = i + 1
-                    break
-        df = pd.read_csv(f, skiprows=skip)
-        param = df.columns[-1]
-        sub = df[["LAT", "LON", "YEAR", "DOY", param]].copy()
-        sub["param"] = param.upper()
-        sub.rename(columns={param: "val"}, inplace=True)
-        sub.loc[sub["val"] <= -900, "val"] = np.nan
-        dfs.append(sub)
+        latest_weather = df_all_w[df_all_w["date"] == latest_date][
+            ["station_lat", "station_lon", "ground_water_level_cm", "days_without_rain", "vapor_pressure_deficit"]
+        ].drop_duplicates(subset=["station_lat", "station_lon"])
 
-    long_df = pd.concat(dfs, ignore_index=True)
-    grouped_long = long_df.groupby(["LAT", "LON", "YEAR", "DOY", "param"], as_index=False)["val"].mean()
-    grouped = grouped_long.pivot(index=["LAT", "LON", "YEAR", "DOY"], columns="param", values="val").reset_index()
-    grouped["date"] = pd.to_datetime(grouped["YEAR"].astype(str) + "-" + grouped["DOY"].astype(str), format="%Y-%j").dt.date
+        from scipy.spatial import cKDTree
+        w_coords = latest_weather[["station_lat", "station_lon"]].values
+        tree = cKDTree(w_coords)
 
-    # Compute days without rain and latest metrics
-    grouped.sort_values(by=["LAT", "LON", "date"], inplace=True)
-    is_dry = (grouped["PRECTOTCORR"].fillna(0.0) < 1.0).astype(int).values
-    lats = grouped["LAT"].values
-    lons = grouped["LON"].values
+        h3_coords = df_static[["centroid_lat", "centroid_lon"]].values
+        _, idxs = tree.query(h3_coords, k=1, workers=-1)
 
-    dwr_arr = np.zeros(len(grouped), dtype=np.int32)
-    cur_dwr = 0
-    last_loc = None
-    for i in range(len(grouped)):
-        loc = (lats[i], lons[i])
-        if loc != last_loc:
-            cur_dwr = 0
-            last_loc = loc
-        if is_dry[i] == 1:
-            cur_dwr += 1
-        else:
-            cur_dwr = 0
-        dwr_arr[i] = cur_dwr
-    grouped["days_without_rain"] = dwr_arr
+        matched_weather = latest_weather.iloc[idxs].reset_index(drop=True)
+        df_static["gwl_cm"] = matched_weather["ground_water_level_cm"].values
+        df_static["ground_water_level_cm"] = matched_weather["ground_water_level_cm"].values
+        df_static["days_without_rain"] = matched_weather["days_without_rain"].values
+        df_static["vpd_kpa"] = matched_weather["vapor_pressure_deficit"].values
+        df_static["vapor_pressure_deficit"] = matched_weather["vapor_pressure_deficit"].values
 
-    # Tetens formula for VPD
-    temp = grouped["T2M_MAX"].fillna(32.0).values
-    rh = grouped["RH2M"].fillna(75.0).values
-    es = 0.61078 * np.exp((17.27 * temp) / (temp + 237.3))
-    ea = es * (rh / 100.0)
-    grouped["vpd_kpa"] = np.round(np.maximum(0.0, es - ea), 2)
+    else:
+        nasa_dir = os.path.join(RAW_DIR, "nasa_power")
+        csv_2026 = glob.glob(os.path.join(nasa_dir, "*2026*.csv"))
+        logger.info("Reading %d NASA POWER 2026 weather files...", len(csv_2026))
 
-    # GWL in cm
-    gwettop = grouped["GWETTOP"].fillna(0.70).values
-    soil_depletion = (1.0 - np.clip(gwettop, 0.0, 1.0)) * 72.0
-    drought_subsidence = np.minimum(dwr_arr, 35.0) * 1.5
-    grouped["gwl_cm"] = np.round(np.clip(- (soil_depletion + drought_subsidence + 10.0), -120.0, 0.0), 2)
+        dfs = []
+        for f in csv_2026:
+            with open(f, 'r') as fp:
+                skip = 0
+                for i, line in enumerate(fp):
+                    if "-END HEADER-" in line:
+                        skip = i + 1
+                        break
+            df = pd.read_csv(f, skiprows=skip)
+            param = df.columns[-1]
+            sub = df[["LAT", "LON", "YEAR", "DOY", param]].copy()
+            sub["param"] = param.upper()
+            sub.rename(columns={param: "val"}, inplace=True)
+            sub.loc[sub["val"] <= -900, "val"] = np.nan
+            dfs.append(sub)
 
-    # Find the latest available date in 2026
-    latest_date = grouped["date"].max()
-    logger.info("Latest 2026 weather record date: %s", latest_date)
+        long_df = pd.concat(dfs, ignore_index=True)
+        grouped_long = long_df.groupby(["LAT", "LON", "YEAR", "DOY", "param"], as_index=False)["val"].mean()
+        grouped = grouped_long.pivot(index=["LAT", "LON", "YEAR", "DOY"], columns="param", values="val").reset_index()
+        grouped["date"] = pd.to_datetime(grouped["YEAR"].astype(str) + "-" + grouped["DOY"].astype(str), format="%Y-%j").dt.date
 
-    latest_weather = grouped[grouped["date"] == latest_date][
-        ["LAT", "LON", "gwl_cm", "days_without_rain", "vpd_kpa"]
-    ].drop_duplicates(subset=["LAT", "LON"])
+        # Compute days without rain and latest metrics
+        grouped.sort_values(by=["LAT", "LON", "date"], inplace=True)
+        is_dry = (grouped["PRECTOTCORR"].fillna(0.0) < 1.0).astype(int).values
+        lats = grouped["LAT"].values
+        lons = grouped["LON"].values
 
-    # Spatial match to H3 centroids
-    from scipy.spatial import cKDTree
-    w_coords = latest_weather[["LAT", "LON"]].values
-    tree = cKDTree(w_coords)
+        dwr_arr = np.zeros(len(grouped), dtype=np.int32)
+        cur_dwr = 0
+        last_loc = None
+        for i in range(len(grouped)):
+            loc = (lats[i], lons[i])
+            if loc != last_loc:
+                cur_dwr = 0
+                last_loc = loc
+            if is_dry[i] == 1:
+                cur_dwr += 1
+            else:
+                cur_dwr = 0
+            dwr_arr[i] = cur_dwr
+        grouped["days_without_rain"] = dwr_arr
 
-    h3_coords = df_static[["centroid_lat", "centroid_lon"]].values
-    _, idxs = tree.query(h3_coords, k=1, workers=-1)
+        # Tetens formula for VPD
+        temp = grouped["T2M_MAX"].fillna(32.0).values
+        rh = grouped["RH2M"].fillna(75.0).values
+        es = 0.61078 * np.exp((17.27 * temp) / (temp + 237.3))
+        ea = es * (rh / 100.0)
+        grouped["vpd_kpa"] = np.round(np.maximum(0.0, es - ea), 2)
 
-    matched_weather = latest_weather.iloc[idxs].reset_index(drop=True)
-    df_static["gwl_cm"] = matched_weather["gwl_cm"].values
-    df_static["ground_water_level_cm"] = matched_weather["gwl_cm"].values
-    df_static["days_without_rain"] = matched_weather["days_without_rain"].values
-    df_static["vpd_kpa"] = matched_weather["vpd_kpa"].values
-    df_static["vapor_pressure_deficit"] = matched_weather["vpd_kpa"].values
+        # GWL in cm
+        gwettop = grouped["GWETTOP"].fillna(0.70).values
+        soil_depletion = (1.0 - np.clip(gwettop, 0.0, 1.0)) * 72.0
+        drought_subsidence = np.minimum(dwr_arr, 35.0) * 1.5
+        grouped["gwl_cm"] = np.round(np.clip(- (soil_depletion + drought_subsidence + 10.0), -120.0, 0.0), 2)
+
+        # Find the latest available date in 2026
+        latest_date = grouped["date"].max()
+        logger.info("Latest 2026 weather record date: %s", latest_date)
+
+        latest_weather = grouped[grouped["date"] == latest_date][
+            ["LAT", "LON", "gwl_cm", "days_without_rain", "vpd_kpa"]
+        ].drop_duplicates(subset=["LAT", "LON"])
+
+        from scipy.spatial import cKDTree
+        w_coords = latest_weather[["LAT", "LON"]].values
+        tree = cKDTree(w_coords)
+
+        h3_coords = df_static[["centroid_lat", "centroid_lon"]].values
+        _, idxs = tree.query(h3_coords, k=1, workers=-1)
+
+        matched_weather = latest_weather.iloc[idxs].reset_index(drop=True)
+        df_static["gwl_cm"] = matched_weather["gwl_cm"].values
+        df_static["ground_water_level_cm"] = matched_weather["gwl_cm"].values
+        df_static["days_without_rain"] = matched_weather["days_without_rain"].values
+        df_static["vpd_kpa"] = matched_weather["vpd_kpa"].values
+        df_static["vapor_pressure_deficit"] = matched_weather["vpd_kpa"].values
 
     # Check recent hotspots in October 2026 for SAR anomaly / active clearing detection
     recent_hotspot_cells = set()
+    firms_cache = os.path.join(PROCESSED_DIR, "firms_hotspots_multiyear_cache.parquet")
+    if os.path.exists(firms_cache):
+        try:
+            df_fh = pd.read_parquet(firms_cache)
+            df_fh["date"] = pd.to_datetime(df_fh["date"]).dt.date
+            from datetime import date as dt_date
+            oct_2026 = df_fh[df_fh["date"] >= dt_date(2026, 10, 1)]
+            for c in oct_2026["h3_index"].unique():
+                recent_hotspot_cells.update(h3.grid_disk(c, 1))
+            logger.info("Matched %d hotspot-affected cells from FIRMS multiyear cache", len(recent_hotspot_cells))
+        except Exception as e:
+            logger.warning("Could not load FIRMS cache: %s", e)
+
     sip_files = glob.glob(os.path.join(RAW_DIR, "sipongi", "sebaran-hotspot*.xlsx"))
     for f in sip_files:
         try:
             df = pd.read_excel(f, sheet_name="Detail")
             d = pd.to_datetime(df["Tanggal"], format="%d-%m-%Y", errors="coerce").dt.date
-            # October 2026 hotspots
             oct_mask = (d >= pd.to_datetime("2026-10-01").date())
             for lat, lon in zip(df.loc[oct_mask, "Latitude"], df.loc[oct_mask, "Longitude"]):
                 try:
@@ -250,104 +296,150 @@ def seed_database():
     df_features["recommended_action"] = actions
     df_features["sar_clearing_detected"] = sar_flags
 
+    # Join administrative district hierarchy if present
+    dist_parquet = os.path.join(PROCESSED_DIR, "h3_district_mapping.parquet")
+    if os.path.exists(dist_parquet):
+        logger.info("Merging administrative district hierarchy from %s...", dist_parquet)
+        df_dist = pd.read_parquet(dist_parquet)
+        df_features = df_features.merge(df_dist[["h3_index", "province_name", "regency_name", "district_name"]], on="h3_index", how="left")
+        df_features["province_name"] = df_features["province_name"].fillna("UNKNOWN")
+        df_features["regency_name"] = df_features["regency_name"].fillna("UNKNOWN")
+        df_features["district_name"] = df_features["district_name"].fillna("UNKNOWN")
+    else:
+        df_features["province_name"] = "UNKNOWN"
+        df_features["regency_name"] = "UNKNOWN"
+        df_features["district_name"] = "UNKNOWN"
+
+    # Export computed snapshot parquet for deployment / offline seeding
+    snapshot_out_path = os.path.join(PROCESSED_DIR, "latest_risk_snapshot_2026.parquet")
+    logger.info("Saving latest 2026 risk snapshot to %s...", snapshot_out_path)
+    df_features.to_parquet(snapshot_out_path, index=False)
+    logger.info("Exported %d records to %s (%.2f MB)", len(df_features), snapshot_out_path, os.path.getsize(snapshot_out_path) / (1024 * 1024))
+
+    # Print summary statistics
+    logger.info("=== SUMMARY OF INFERENCE FOR 2026 (%s) ===", snapshot_date)
+    cat_summary = df_features.groupby("risk_category").agg(
+        count=("h3_index", "count"),
+        avg_risk=("ignition_risk_score", "mean"),
+        avg_gwl=("gwl_cm", "mean"),
+        avg_dwr=("days_without_rain", "mean"),
+        sar_alerts=("sar_clearing_detected", "sum")
+    ).reset_index()
+    for _, r in cat_summary.iterrows():
+        logger.info("  Category: %-8s | Count: %6d | Avg Risk: %5.3f | Avg GWL: %6.1f cm | Avg DWR: %4.1f days | SAR Alerts: %d",
+                    r["risk_category"], r["count"], r["avg_risk"], r["avg_gwl"], r["avg_dwr"], r["sar_alerts"])
+
     # Connect to PostgreSQL / PostGIS
     db_config = get_db_config()
-    logger.info("Connecting to PostgreSQL at %s:%d/%s...", db_config["host"], db_config["port"], db_config["dbname"])
-    conn = psycopg2.connect(**db_config)
-    cur = conn.cursor()
+    logger.info("Attempting to connect to PostgreSQL at %s:%d/%s...", db_config["host"], db_config["port"], db_config["dbname"])
+    
+    try:
+        conn = psycopg2.connect(connect_timeout=5, **db_config)
+        cur = conn.cursor()
 
-    # 1. Upsert peat_h3_grid
-    logger.info("Upserting %d cells into peat_h3_grid...", len(df_features))
-    grid_rows = []
-    for _, row in df_features.iterrows():
-        grid_rows.append((
-            str(row["h3_index"]),
-            8,
-            str(row["geom_wkt"]),
-            str(row["centroid_wkt"]),
-            float(row["peat_depth_meters"]),
-            float(row["distance_to_canal_meters"]),
-            float(row["distance_to_road_meters"]),
-            str(row["concession_id"])
-        ))
+        # 1. Upsert peat_h3_grid
+        logger.info("Upserting %d cells into peat_h3_grid...", len(df_features))
+        grid_rows = []
+        for _, row in df_features.iterrows():
+            grid_rows.append((
+                str(row["h3_index"]),
+                8,
+                str(row["geom_wkt"]),
+                str(row["centroid_wkt"]),
+                float(row["peat_depth_meters"]),
+                float(row["distance_to_canal_meters"]),
+                float(row["distance_to_road_meters"]),
+                str(row.get("concession_id", "COMMUNITY")),
+                str(row.get("province_name", "UNKNOWN")),
+                str(row.get("regency_name", "UNKNOWN")),
+                str(row.get("district_name", "UNKNOWN"))
+            ))
 
-    upsert_grid_sql = """
-        INSERT INTO peat_h3_grid (
-            h3_index, resolution, geom, centroid,
-            peat_depth_meters, distance_to_canal_meters, distance_to_road_meters, concession_id
-        ) VALUES (
-            %s, %s, ST_GeomFromText(%s, 4326), ST_GeomFromText(%s, 4326),
-            %s, %s, %s, %s
-        )
-        ON CONFLICT (h3_index) DO UPDATE SET
-            peat_depth_meters = EXCLUDED.peat_depth_meters,
-            distance_to_canal_meters = EXCLUDED.distance_to_canal_meters,
-            distance_to_road_meters = EXCLUDED.distance_to_road_meters,
-            concession_id = EXCLUDED.concession_id;
-    """
-    psycopg2.extras.execute_batch(cur, upsert_grid_sql, grid_rows, page_size=2500)
-    conn.commit()
-    logger.info("Successfully updated peat_h3_grid!")
+        upsert_grid_sql = """
+            INSERT INTO peat_h3_grid (
+                h3_index, resolution, geom, centroid,
+                peat_depth_meters, distance_to_canal_meters, distance_to_road_meters, concession_id,
+                province_name, regency_name, district_name
+            ) VALUES (
+                %s, %s, ST_GeomFromText(%s, 4326), ST_GeomFromText(%s, 4326),
+                %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (h3_index) DO UPDATE SET
+                peat_depth_meters = EXCLUDED.peat_depth_meters,
+                distance_to_canal_meters = EXCLUDED.distance_to_canal_meters,
+                distance_to_road_meters = EXCLUDED.distance_to_road_meters,
+                concession_id = EXCLUDED.concession_id,
+                province_name = EXCLUDED.province_name,
+                regency_name = EXCLUDED.regency_name,
+                district_name = EXCLUDED.district_name;
+        """
+        psycopg2.extras.execute_batch(cur, upsert_grid_sql, grid_rows, page_size=2500)
+        conn.commit()
+        logger.info("Successfully updated peat_h3_grid in PostGIS!")
 
-    # 2. Upsert h3_daily_risk_snapshot
-    # We seed both the actual date (e.g. 2026-10-14) and CURRENT_DATE to ensure dashboard compatibility
-    logger.info("Upserting daily risk snapshots for %s...", snapshot_date)
-    snapshot_rows = []
-    for _, row in df_features.iterrows():
-        snapshot_rows.append((
-            str(row["h3_index"]),
-            snapshot_date,
-            float(row["gwl_cm"]),
-            int(row["days_without_rain"]),
-            float(row["vpd_kpa"]),
-            bool(row["sar_clearing_detected"]),
-            float(row["ignition_risk_score"]),
-            str(row["risk_category"]),
-            str(row["recommended_action"])
-        ))
+        # 2. Upsert h3_daily_risk_snapshot
+        logger.info("Upserting daily risk snapshots for %s...", snapshot_date)
+        snapshot_rows = []
+        for _, row in df_features.iterrows():
+            snapshot_rows.append((
+                str(row["h3_index"]),
+                snapshot_date,
+                float(row["gwl_cm"]),
+                int(row["days_without_rain"]),
+                float(row["vpd_kpa"]),
+                bool(row["sar_clearing_detected"]),
+                float(row["ignition_risk_score"]),
+                str(row["risk_category"]),
+                str(row["recommended_action"])
+            ))
 
-    upsert_snap_sql = """
-        INSERT INTO h3_daily_risk_snapshot (
-            h3_index, snapshot_date, gwl_cm, days_without_rain, vpd_kpa,
-            sar_clearing_detected, ignition_risk_score, risk_category, recommended_action
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s
-        )
-        ON CONFLICT (h3_index, snapshot_date) DO UPDATE SET
-            gwl_cm = EXCLUDED.gwl_cm,
-            days_without_rain = EXCLUDED.days_without_rain,
-            vpd_kpa = EXCLUDED.vpd_kpa,
-            sar_clearing_detected = EXCLUDED.sar_clearing_detected,
-            ignition_risk_score = EXCLUDED.ignition_risk_score,
-            risk_category = EXCLUDED.risk_category,
-            recommended_action = EXCLUDED.recommended_action;
-    """
-    psycopg2.extras.execute_batch(cur, upsert_snap_sql, snapshot_rows, page_size=2500)
-    conn.commit()
-    logger.info("Successfully seeded %d snapshots for %s!", len(snapshot_rows), snapshot_date)
+        upsert_snap_sql = """
+            INSERT INTO h3_daily_risk_snapshot (
+                h3_index, snapshot_date, gwl_cm, days_without_rain, vpd_kpa,
+                sar_clearing_detected, ignition_risk_score, risk_category, recommended_action
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (h3_index, snapshot_date) DO UPDATE SET
+                gwl_cm = EXCLUDED.gwl_cm,
+                days_without_rain = EXCLUDED.days_without_rain,
+                vpd_kpa = EXCLUDED.vpd_kpa,
+                sar_clearing_detected = EXCLUDED.sar_clearing_detected,
+                ignition_risk_score = EXCLUDED.ignition_risk_score,
+                risk_category = EXCLUDED.risk_category,
+                recommended_action = EXCLUDED.recommended_action;
+        """
+        psycopg2.extras.execute_batch(cur, upsert_snap_sql, snapshot_rows, page_size=2500)
+        conn.commit()
+        logger.info("Successfully seeded %d snapshots for %s into PostGIS!", len(snapshot_rows), snapshot_date)
 
-    # Verification query
-    cur.execute("""
-        SELECT 
-            risk_category,
-            COUNT(*) as total_hexagons,
-            ROUND(AVG(gwl_cm), 2) as avg_gwl_cm,
-            ROUND(AVG(days_without_rain)::numeric, 1) as avg_dwr,
-            ROUND(AVG(ignition_risk_score)::numeric, 3) as avg_risk,
-            COUNT(*) FILTER (WHERE sar_clearing_detected = TRUE) as sar_alerts
-        FROM h3_daily_risk_snapshot
-        WHERE snapshot_date = %s
-        GROUP BY risk_category
-        ORDER BY avg_risk DESC;
-    """, (snapshot_date,))
-    summary = cur.fetchall()
-    logger.info("=== POSTGIS RISK SNAPSHOT SUMMARY (%s) ===", snapshot_date)
-    for row in summary:
-        logger.info("  Category: %-8s | Count: %5d | Avg GWL: %6.1f cm | Avg DWR: %4.1f days | Avg Risk: %5.3f | SAR Alerts: %d",
-                    row[0], row[1], row[2], row[3], row[4], row[5])
+        # Verification query
+        cur.execute("""
+            SELECT 
+                risk_category,
+                COUNT(*) as total_hexagons,
+                ROUND(AVG(gwl_cm), 2) as avg_gwl_cm,
+                ROUND(AVG(days_without_rain)::numeric, 1) as avg_dwr,
+                ROUND(AVG(ignition_risk_score)::numeric, 3) as avg_risk,
+                COUNT(*) FILTER (WHERE sar_clearing_detected = TRUE) as sar_alerts
+            FROM h3_daily_risk_snapshot
+            WHERE snapshot_date = %s
+            GROUP BY risk_category
+            ORDER BY avg_risk DESC;
+        """, (snapshot_date,))
+        summary = cur.fetchall()
+        logger.info("=== POSTGIS LIVE RISK SNAPSHOT VERIFIED ===")
+        for row in summary:
+            logger.info("  Category: %-8s | Count: %6d | Avg GWL: %6.1f cm | Avg DWR: %4.1f days | Avg Risk: %5.3f | SAR Alerts: %d",
+                        row[0], row[1], row[2], row[3], row[4], row[5])
 
-    cur.close()
-    conn.close()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("Could not connect directly to PostGIS: %s", e)
+        logger.info("NOTE: The full inference snapshot has been exported to: %s", snapshot_out_path)
+        logger.info("This file can be seeded during GCP deployment using 'python 04_seed_real_2026_to_postgis.py' inside the container/VM.")
+
     logger.info("Step 04 completed successfully in %.2fs total", time.time() - t0)
 
 if __name__ == "__main__":

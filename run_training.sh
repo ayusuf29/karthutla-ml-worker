@@ -23,15 +23,19 @@ echo "[1/4] Running Step 01: Build H3 Resolution 8 Static Grid (KHG + OSM)..."
 $PY_BIN -u training/01_build_h3_static_grid.py
 
 echo ""
-echo "[2/4] Running Step 02: Merge NASA POWER Weather and FIRMS Telemetry..."
+echo "[2/5] Running Step 02: Merge NASA POWER Weather and FIRMS Telemetry..."
 $PY_BIN -u training/02_merge_weather_and_firms.py
 
 echo ""
-echo "[3/4] Running Step 03: Train Karhutla XGBoost Classifier..."
+echo "[3/5] Running Step 05: Real-Time Telemetry Scraping (May 2026 - Present)..."
+$PY_BIN -u training/05_realtime_data_fetcher.py --start 2026-05-01 || echo "[WARNING] Step 05 realtime fetcher warning, proceeding with available dataset."
+
+echo ""
+echo "[4/5] Running Step 03: Train Karhutla XGBoost Classifier..."
 $PY_BIN -u training/03_train_xgboost.py
 
 echo ""
-echo "[4/4] Running Step 04: Seed Real 2026 Predictions to PostGIS..."
+echo "[5/5] Running Step 04: Seed Real 2026 Predictions to PostGIS..."
 $PY_BIN -u training/04_seed_real_2026_to_postgis.py
 
 echo ""
